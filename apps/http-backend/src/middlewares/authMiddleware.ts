@@ -6,6 +6,7 @@ const authMiddleware = async (
   res: Response,
   next: NextFunction
 ) => {
+  console.log("req.cookies", req.cookies);
   const token = req.cookies.token;
 
   if (!token) {
@@ -15,7 +16,10 @@ const authMiddleware = async (
 
   try {
     const decoded = jwt.verify(token, config.jwtSecret ?? "");
-    req.user = decoded;
+    console.log("decoded", decoded);
+    if (typeof decoded !== "string" && decoded?.userId) {
+      req.userId = decoded.userId as string;
+    }
     next();
   } catch (error) {
     res.status(401).json({ message: "Unauthorized" });

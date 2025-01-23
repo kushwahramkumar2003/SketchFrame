@@ -3,15 +3,40 @@ import jwt from "jsonwebtoken";
 import { config } from "@repo/backend-common/config";
 import prisma from "@repo/db/client";
 import { CreateUserSchema, SigninSchema } from "@repo/common/types";
-import { Request, Response } from "express";
-export const signup = async (req: Request, res: Response) => {
+import { CustomError } from "../utils/errors";
+import express from "express";
+
+interface AuthResponse {
+  message: string;
+  userId?: string;
+  token?: string;
+}
+
+export const signup = async (
+  req: express.Request,
+  res: express.Response<AuthResponse>
+): Promise<express.Response<AuthResponse>> => {
   try {
     const validated = CreateUserSchema.safeParse(req.body);
 
     if (!validated.success) {
-      const errorMessage =
-        validated.error?.errors[0]?.message || "Invalid input";
-      return res.status(400).json({ message: errorMessage });
+      throw new CustomError(
+        "ValidationError",
+        validated.error.errors[0]?.message || "Invalid input",
+        400
+      );
+    }
+
+    const existingUser = await prisma.user.findUnique({
+      where: { email: validated.data.username },
+    });
+
+    if (existingUser) {
+      throw new CustomError(
+        "DuplicateError",
+        "User with this email already exists",
+        409
+      );
     }
 
     const hashedPassword = await bcrypt.hash(validated.data.password, 10);
@@ -24,53 +49,81 @@ export const signup = async (req: Request, res: Response) => {
       },
     });
 
-    return res
-      .status(200)
-      .json({ message: "User created successfully", userId: user.id });
+    const token = jwt.sign({ userId: user.id }, config.jwtSecret, {
+      expiresIn: "1h",
+    });
+
+    return res.status(201).json({
+      message: "User created successfully",
+      userId: user.id,
+      token,
+    });
   } catch (error) {
+    if (error instanceof CustomError) {
+      return res.status(error.statusCode).json({ message: error.message });
+    }
+    console.error("Signup error:", error);
     return res.status(500).json({ message: "Internal server error" });
   }
 };
 
-export const login = async (req: Request, res: Response) => {
-  const validateInputs = SigninSchema.safeParse(req.body);
+export const login = async (
+  req: express.Request,
+  res: express.Response<AuthResponse>
+): Promise<express.Response<AuthResponse>> => {
+  try {
+    const validated = SigninSchema.safeParse(req.body);
 
-  if (!validateInputs.success) {
-    const errorMessage =
-      validateInputs.error?.errors[0]?.message || "Invalid input";
-    return res.status(400).json({ message: errorMessage });
+    console.log(validated);
+
+    if (!validated.success) {
+      throw new CustomError(
+        "ValidationError",
+        validated.error.errors[0]?.message || "Invalid input",
+        400
+      );
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { email: validated.data.username },
+    });
+
+    if (!user) {
+      throw new CustomError("AuthError", "Invalid credentials", 401);
+    }
+
+    const passwordMatch = await bcrypt.compare(
+      validated.data.password,
+      user.password
+    );
+
+    if (!passwordMatch) {
+      throw new CustomError("AuthError", "Invalid credentials", 401);
+    }
+
+    const token = jwt.sign({ userId: user.id }, config.jwtSecret, {
+      expiresIn: "1h",
+    });
+
+    const cookieOptions = {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "strict" as const,
+      maxAge: 3600000, // 1 hour
+    };
+
+    res.cookie("token", token, cookieOptions);
+
+    return res.status(200).json({
+      message: "Logged in successfully",
+      userId: user.id,
+      token,
+    });
+  } catch (error) {
+    if (error instanceof CustomError) {
+      return res.status(error.statusCode).json({ message: error.message });
+    }
+    console.error("Login error:", error);
+    return res.status(500).json({ message: "Internal server error" });
   }
-
-  const user = await prisma.user.findFirst({
-    where: {
-      email: validateInputs.data.username,
-    },
-  });
-
-  if (!user) {
-    return res.status(401).json({ message: "Invalid credentials" });
-  }
-
-  const passwordMatch = await bcrypt.compare(
-    validateInputs.data.password,
-    user.password
-  );
-
-  if (!passwordMatch) {
-    return res.status(401).json({ message: "Invalid credentials" });
-  }
-
-  const cookieOptions = {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === "production",
-    sameSite: "strict" as const,
-  };
-
-  const jwtToken = jwt.sign({ userId: user.id }, config.jwtSecret, {
-    expiresIn: "1h",
-  });
-
-  res.cookie("token", jwtToken, cookieOptions);
-
-  return res.json({ message: "Logged in successfully" });
 };

@@ -7,14 +7,14 @@ export const createRoom = async (req: Request, res: Response) => {
   if (!data.success) {
     return res.status(400).json({ message: "Invalid input" });
   }
-  const user = req?.user;
-  if (!user) {
+  const userId = req?.userId;
+  if (!userId) {
     return res.status(401).json({ message: "Unauthorized" });
   }
   const room = await prisma.room.create({
     data: {
       slug: data.data.name,
-      adminId: user.id,
+      adminId: userId,
     },
   });
   res.json({

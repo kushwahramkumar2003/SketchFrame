@@ -1,36 +1,104 @@
-import ws from "ws";
-import jwt from "jsonwebtoken";
+import { WebSocket, WebSocketServer } from "ws";
+import jwt, { JwtPayload } from "jsonwebtoken";
+import prisma from "@repo/db/client";
 import { config } from "@repo/backend-common/config";
-const wss = new ws.Server({ port: 8081 });
 
-wss.on("connection", (ws, req) => {
-  const url = req.url;
+const wss = new WebSocketServer({ port: 8081 });
+
+interface User {
+  ws: WebSocket;
+  rooms: string[];
+  userId: string;
+}
+
+const users: User[] = [];
+
+function checkUser(token: string): string | null {
+  try {
+    const decoded = jwt.verify(token, config.jwtSecret);
+
+    if (typeof decoded == "string") {
+      return null;
+    }
+
+    if (!decoded || !decoded.userId) {
+      return null;
+    }
+
+    return decoded.userId;
+  } catch (e) {
+    return null;
+  }
+  return null;
+}
+
+wss.on("connection", function connection(ws, request) {
+  const url = request.url;
   if (!url) {
     return;
   }
   const queryParams = new URLSearchParams(url.split("?")[1]);
-  const token = queryParams.get("token");
+  const token = queryParams.get("token") || "";
+  const userId = checkUser(token);
 
-  if (!token) {
-    ws.send("Unauthorized");
+  if (userId == null) {
     ws.close();
-    return;
+    return null;
   }
 
-  const decoded = jwt.verify(token, config.jwtSecret ?? "");
+  users.push({
+    userId,
+    rooms: [],
+    ws,
+  });
 
-  if (!decoded) {
-    ws.send("Unauthorized");
-    ws.close();
-    return;
-  }
+  ws.on("message", async function message(data) {
+    let parsedData;
+    if (typeof data !== "string") {
+      parsedData = JSON.parse(data.toString());
+    } else {
+      parsedData = JSON.parse(data); // {type: "join-room", roomId: 1}
+    }
 
-  ws.send("Connected to the server");
+    if (parsedData.type === "join_room") {
+      const user = users.find((x) => x.ws === ws);
+      user?.rooms.push(parsedData.roomId);
+    }
 
-  ws.on("message", (message) => {
-    console.log(`Received message => ${message}`);
-    ws.send(`Received message => ${message}`);
+    if (parsedData.type === "leave_room") {
+      const user = users.find((x) => x.ws === ws);
+      if (!user) {
+        return;
+      }
+      user.rooms = user?.rooms.filter((x) => x === parsedData.room);
+    }
+
+    console.log("message received");
+    console.log(parsedData);
+
+    if (parsedData.type === "chat") {
+      const roomId = parsedData.roomId;
+      const message = parsedData.message;
+
+      await prisma.chat.create({
+        data: {
+          roomId: Number(roomId),
+          message,
+          userId,
+        },
+      });
+
+      users.forEach((user) => {
+        if (user.rooms.includes(roomId)) {
+          user.ws.send(
+            JSON.stringify({
+              type: "chat",
+              message: message,
+              roomId,
+            })
+          );
+        }
+      });
+    }
   });
 });
-
-console.log("Server is running on port 8080");

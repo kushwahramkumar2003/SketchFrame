@@ -1,9 +1,17 @@
 import express, { Request, Response } from "express";
 import routes from "./routes";
+import cookieParser from "cookie-parser";
+import cors from "cors";
 
 const app = express();
 
+app.use(
+  cors({
+    origin: "*",
+  })
+);
 app.use(express.json());
+app.use(cookieParser());
 app.use(express.urlencoded({ extended: true }));
 
 app.use(routes);
