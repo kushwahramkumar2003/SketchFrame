@@ -1,5 +1,5 @@
-import { AuthPage } from "@/components/AuthPage";
+import SigninPage from "@/components/signin-page";
 
 export default function Signin() {
-  return <AuthPage isSignin={true} />;
+  return <SigninPage />;
 }
