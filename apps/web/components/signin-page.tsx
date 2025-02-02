@@ -3,27 +3,85 @@ import React, { useState } from "react";
 import { motion } from "framer-motion";
 import { Pen, Github, Mail, Lock, ChevronRight } from "lucide-react";
 import { FaGithub } from "react-icons/fa";
+import { useForm } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import * as z from "zod";
+import axios from "axios";
+import { toast } from "sonner";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
+import { Button } from "./ui/button";
+
+// Define the validation schema
+const signinSchema = z.object({
+  email: z.string().email("Invalid email address"),
+  password: z.string().min(8, "Password must be at least 8 characters"),
+  rememberMe: z.boolean().optional(),
+});
+
+type SigninFormData = z.infer<typeof signinSchema>;
 
 const SigninPage = () => {
   const [signinMethod, setSigninMethod] = useState<"email" | "github">("email");
-  const [formData, setFormData] = useState({
-    email: "",
-    password: "",
-    rememberMe: false,
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const router = useRouter();
+
+  const {
+    register,
+    handleSubmit,
+    formState: { errors, isValid },
+  } = useForm<SigninFormData>({
+    resolver: zodResolver(signinSchema),
+    mode: "onChange", // Enable real-time validation
   });
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const { name, value, type, checked } = e.target;
-    setFormData((prev) => ({
-      ...prev,
-      [name]: type === "checkbox" ? checked : value,
-    }));
+  const handleGithubSignin = async () => {
+    try {
+      if (!process.env.NEXT_PUBLIC_GITHUB_CLIENT_ID) {
+        throw new Error("GitHub client ID is not configured");
+      }
+      window.location.href = `https://github.com/login/oauth/authorize?client_id=${process.env.NEXT_PUBLIC_GITHUB_CLIENT_ID}`;
+    } catch (error) {
+      toast.error("Failed to initiate GitHub signin");
+    }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    // Handle signin logic here
-    console.log("Form submitted:", formData);
+  const onSubmit = async (data: SigninFormData) => {
+    try {
+      setIsSubmitting(true);
+      const response = await axios.post(
+        "http://localhost:8080/api/v1/login",
+        {
+          username: data.email,
+          password: data.password,
+          rememberMe: data.rememberMe,
+        },
+        {
+          headers: {
+            "Content-Type": "application/json",
+          },
+        }
+      );
+
+      if (response.status === 200 && response.data.token) {
+        const token = response.data.token as string;
+        localStorage.setItem("sketchframe_auth_token", token);
+
+        toast.success("Signed in successfully!");
+        router.push("/dashboard");
+      } else {
+        throw new Error("Invalid response from server");
+      }
+    } catch (error: any) {
+      console.error("Signin error:", error);
+      toast.error(
+        error.response?.data?.message ||
+          error.message ||
+          "Failed to sign in. Please try again."
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -122,7 +180,11 @@ const SigninPage = () => {
           </div>
 
           {signinMethod === "email" ? (
-            <form onSubmit={handleSubmit} className="space-y-6">
+            <form
+              onSubmit={handleSubmit(onSubmit)}
+              className="space-y-6"
+              noValidate
+            >
               <div>
                 <label
                   htmlFor="email"
@@ -134,15 +196,21 @@ const SigninPage = () => {
                   <Mail className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400 group-hover:text-indigo-600 transition-colors duration-300" />
                   <input
                     id="email"
-                    name="email"
                     type="email"
-                    required
-                    value={formData.email}
-                    onChange={handleInputChange}
-                    className="pl-10 w-full py-2 px-4 rounded-lg border border-gray-300 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all duration-300"
+                    {...register("email")}
+                    className={`pl-10 w-full py-2 px-4 rounded-lg border ${
+                      errors.email ? "border-red-500" : "border-gray-300"
+                    } focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all duration-300`}
                     placeholder="you@example.com"
+                    disabled={isSubmitting}
+                    autoComplete="email"
                   />
                 </div>
+                {errors.email && (
+                  <p className="text-red-500 text-sm mt-1">
+                    {errors.email.message}
+                  </p>
+                )}
               </div>
 
               <div>
@@ -156,25 +224,29 @@ const SigninPage = () => {
                   <Lock className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400 group-hover:text-indigo-600 transition-colors duration-300" />
                   <input
                     id="password"
-                    name="password"
                     type="password"
-                    required
-                    value={formData.password}
-                    onChange={handleInputChange}
-                    className="pl-10 w-full py-2 px-4 rounded-lg border border-gray-300 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all duration-300"
+                    {...register("password")}
+                    className={`pl-10 w-full py-2 px-4 rounded-lg border ${
+                      errors.password ? "border-red-500" : "border-gray-300"
+                    } focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all duration-300`}
                     placeholder="••••••••"
+                    disabled={isSubmitting}
+                    autoComplete="current-password"
                   />
                 </div>
+                {errors.password && (
+                  <p className="text-red-500 text-sm mt-1">
+                    {errors.password.message}
+                  </p>
+                )}
               </div>
 
               <div className="flex items-center justify-between">
                 <div className="flex items-center">
                   <input
                     id="rememberMe"
-                    name="rememberMe"
                     type="checkbox"
-                    checked={formData.rememberMe}
-                    onChange={handleInputChange}
+                    {...register("rememberMe")}
                     className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded transition-colors duration-300"
                   />
                   <label
@@ -184,26 +256,36 @@ const SigninPage = () => {
                     Remember me
                   </label>
                 </div>
-                <motion.a
-                  whileHover={{ scale: 1.05 }}
-                  href="#"
+                <Link
+                  href="/forgot-password"
                   className="text-sm font-medium text-indigo-600 hover:text-indigo-500 transition-colors duration-300"
                 >
                   Forgot password?
-                </motion.a>
+                </Link>
               </div>
 
-              <motion.button
-                whileHover={{
-                  scale: 1.02,
-                  boxShadow: "0 0 20px rgba(99, 102, 241, 0.4)",
-                }}
+              <Button
                 type="submit"
-                className="w-full bg-gradient-to-r from-indigo-600 to-purple-600 text-white py-3 px-4 rounded-lg font-medium flex items-center justify-center gap-2 hover:from-indigo-700 hover:to-purple-700 transition-all duration-300"
+                disabled={isSubmitting}
+                className={`w-full py-3 px-4 rounded-lg font-medium flex items-center justify-center gap-2 transition-all duration-300
+                  ${
+                    isSubmitting
+                      ? "bg-gray-400 cursor-not-allowed"
+                      : "bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white"
+                  }`}
               >
-                Sign In
-                <ChevronRight className="h-5 w-5" />
-              </motion.button>
+                {isSubmitting ? (
+                  <>
+                    <span className="animate-spin">⚪</span>
+                    Signing in...
+                  </>
+                ) : (
+                  <>
+                    Sign In
+                    <ChevronRight className="h-5 w-5" />
+                  </>
+                )}
+              </Button>
             </form>
           ) : (
             <div className="text-center">
@@ -212,6 +294,8 @@ const SigninPage = () => {
                   scale: 1.02,
                   boxShadow: "0 0 20px rgba(99, 102, 241, 0.4)",
                 }}
+                onClick={handleGithubSignin}
+                disabled={isSubmitting}
                 className="w-full bg-[#24292F] text-white py-3 px-4 rounded-lg font-medium flex items-center justify-center gap-2 hover:bg-[#1a1f24] transition-all duration-300"
               >
                 <Github className="h-5 w-5" />
